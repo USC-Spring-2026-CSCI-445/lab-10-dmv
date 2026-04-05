@@ -131,7 +131,10 @@ class RrtPlanner:
     def _randomly_sample_q(self) -> Node:
         # Choose uniform randomly sampled points
         ######### Your code starts here #########
-
+        x_min, x_max, y_min, y_max = self.map_aabb
+        x = np.random.uniform(x_min, x_max)
+        y = np.random.uniform(y_min, y_max)
+        return Node(np.array([x, y]), parent=None)
         ######### Your code ends here #########
 
     def _nearest_vertex(self, graph: List[Node], q: Node) -> Node:
