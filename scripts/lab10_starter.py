@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from typing import Optional, Tuple, List, Dict
 from argparse import ArgumentParser
-from math import inf, sqrt, atan2, pi
+from math import inf, sqrt, atan2, pi, sin, cos
 from time import sleep, time
 import queue
 import json
@@ -192,7 +192,115 @@ class RrtPlanner:
 
 # Protip: copy the ObstacleFreeWaypointController class from lab5.py here
 ######### Your code starts here #########
+def publish_waypoints(waypoints: List[Dict], publisher: rospy.Publisher):
+    marker_array = MarkerArray()
+    for i, waypoint in enumerate(waypoints):
+        marker = Marker()
+        marker.header.frame_id = "odom"
+        marker.header.stamp = rospy.Time.now()
+        marker.ns = "waypoints"
+        marker.id = i
+        marker.type = Marker.CYLINDER
+        marker.action = Marker.ADD
+        marker.pose.position = Point(waypoint["x"], waypoint["y"], 0.0)
+        marker.pose.orientation = Quaternion(0, 0, 0, 1)
+        marker.scale = Vector3(0.1, 0.1, 0.1)
+        marker.color = ColorRGBA(0.0, 1.0, 0.0, 0.5)
+        marker_array.markers.append(marker)
+    publisher.publish(marker_array)
 
+class ObstacleFreeWaypointController:
+    def __init__(self, waypoints: List[Dict]):
+        self.waypoints = waypoints
+        # Subscriber to the robot's current position (assuming you have Odometry data)
+        self.odom_sub = rospy.Subscriber("/odom", Odometry, self.odom_callback)
+        self.robot_ctrl_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.waypoint_pub = rospy.Publisher("/waypoints", MarkerArray, queue_size=10)
+        sleep(0.5)  # sleep to give time for rviz to subscribe to /waypoints
+        publish_waypoints(self.waypoints, self.waypoint_pub)
+
+        self.current_position = None
+
+        # define linear and angular PID controllers here
+        ######### Your code starts here #########
+        self.linear_pid = PIDController(kP=1.2, kI=0.00, kD=1.5, kS=0.5, u_min=0.0, u_max=0.22)
+        self.angular_pid = PIDController(kP=1.2, kI=0.2, kD=1.0, kS=0.5, u_min=-2.0, u_max=2.0)
+        ######### Your code ends here #########
+
+    def odom_callback(self, msg):
+        # Extracting current position from Odometry message
+        pose = msg.pose.pose
+        orientation = pose.orientation
+        _, _, theta = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
+        self.current_position = {"x": pose.position.x, "y": pose.position.y, "theta": theta}
+
+    def calculate_error(self, goal_position: Dict) -> Optional[Tuple]:
+        """Return distance and angle error between the current position and the provided goal_position. Returns None if
+        the current position is not available.
+        """
+        if self.current_position is None:
+            return None
+
+        # Calculate error in position and orientation
+        ######### Your code starts here #########
+        dx = goal_position["x"] - self.current_position["x"]
+        dy = goal_position["y"] - self.current_position["y"]
+        distance_error = sqrt(dx**2 + dy**2)
+        target_theta = atan2(dy, dx)
+        angle_error = target_theta - self.current_position["theta"]
+        angle_error = atan2(sin(angle_error), cos(angle_error))
+        ######### Your code ends here #########
+
+        return distance_error, angle_error
+
+    def control_robot(self):
+        rate = rospy.Rate(20)  # 20 Hz
+        ctrl_msg = Twist()
+
+        current_waypoint_idx = 0
+
+        while not rospy.is_shutdown():
+
+            # Travel through waypoints one at a time, checking if robot is close enough
+            ######### Your code starts here #########
+            if self.current_position is None:
+                rate.sleep()
+                continue
+
+            if current_waypoint_idx >= len(self.waypoints):
+                # Stop robot when done
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = 0.0
+                self.robot_ctrl_pub.publish(ctrl_msg)
+                rate.sleep()
+                continue
+
+            goal = self.waypoints[current_waypoint_idx]
+            error = self.calculate_error(goal)
+
+            if error is None:
+                rate.sleep()
+                continue
+
+            distance_error, angle_error = error
+            t = rospy.get_time()
+
+            linear_vel = self.linear_pid.control(distance_error, t)
+            angular_vel = self.angular_pid.control(angle_error, t)
+
+            # Rotate in place if angle is large
+            if abs(angle_error) > 0.5:
+                linear_vel = 0.0
+
+            ctrl_msg.linear.x = linear_vel
+            ctrl_msg.angular.z = angular_vel
+            self.robot_ctrl_pub.publish(ctrl_msg)
+
+            # Check if waypoint reached
+            if distance_error < 0.1:
+                current_waypoint_idx += 1
+            ######### Your code ends here #########
+            rate.sleep()
 ######### Your code ends here #########
 
 
