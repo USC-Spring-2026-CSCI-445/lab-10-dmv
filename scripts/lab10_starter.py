@@ -59,6 +59,12 @@ class PIDController:
         if len(self.err_hist) > self.kS:
             self.err_int -= self.err_hist.pop(0)
         self.err_dif = err - self.err_prev
+
+        if dt < 1e-6:
+            self.err_prev = err
+            self.t_prev = t
+            return max(self.u_min, min(self.kP * err, self.u_max))
+
         u = (self.kP * err) + (self.kI * self.err_int * dt) + (self.kD * self.err_dif / dt)
         self.err_prev = err
         self.t_prev = t
@@ -140,7 +146,14 @@ class RrtPlanner:
     def _nearest_vertex(self, graph: List[Node], q: Node) -> Node:
         # Determine vertex nearest to sampled point
         ######### Your code starts here #########
-
+        nearest = None
+        min_dist = float("inf")
+        for node in graph:
+            dist = node.distance_to(q)
+            if dist < min_dist:
+                min_dist = dist
+                nearest = node
+        return nearest
         ######### Your code ends here #########
 
     def _is_in_collision(self, q_rand: Node):
@@ -160,7 +173,27 @@ class RrtPlanner:
 
         # Check if sampled point is in collision and add to tree if not
         ######### Your code starts here #########
-
+        q_near = self._nearest_vertex(graph, q_rand)
+ 
+        diff = q_rand.position - q_near.position
+        dist = np.linalg.norm(diff)
+ 
+        if dist < 1e-6:
+            return None
+ 
+        direction = diff / dist
+ 
+        step = min(self.delta, dist)
+        new_position = q_near.position + step * direction
+ 
+        q_new = Node(new_position, parent=q_near)
+ 
+        if self._is_in_collision(q_new):
+            return None
+ 
+        q_near.neighbors.append(q_new)
+        graph.append(q_new)
+        return q_new
         ######### Your code ends here #########
 
     def generate_plan(self, start: POSITION_TYPE, goal: POSITION_TYPE) -> Tuple[List[POSITION_TYPE], List[Node]]:
@@ -187,7 +220,34 @@ class RrtPlanner:
 
         # Find path from start to goal location through tree
         ######### Your code starts here #########
-
+        goal_reached_node = None
+        max_iterations = 5000
+ 
+        for _ in range(max_iterations):
+            q_rand = self._randomly_sample_q()
+            q_new = self._extend(graph, q_rand)
+ 
+            if q_new is None:
+                continue
+ 
+            if q_new.distance_to(goal_node) <= self.goal_threshold:
+                goal_reached_node = q_new
+                break
+ 
+        if goal_reached_node is not None:
+            path_nodes = []
+            current = goal_reached_node
+            while current is not None:
+                path_nodes.append(current)
+                current = current.parent
+            path_nodes.reverse()
+ 
+            for node in path_nodes:
+                plan.append(node.to_dict())
+ 
+            plan[-1] = {"x": goal["x"], "y": goal["y"]}
+        else:
+            rospy.logwarn(f"RRT did not reach the goal within {max_iterations} iterations.")
 
         ######### Your code ends here #########
         return plan, graph
@@ -271,7 +331,6 @@ class ObstacleFreeWaypointController:
                 continue
 
             if current_waypoint_idx >= len(self.waypoints):
-                # Stop robot when done
                 ctrl_msg.linear.x = 0.0
                 ctrl_msg.angular.z = 0.0
                 self.robot_ctrl_pub.publish(ctrl_msg)
@@ -291,7 +350,6 @@ class ObstacleFreeWaypointController:
             linear_vel = self.linear_pid.control(distance_error, t)
             angular_vel = self.angular_pid.control(angle_error, t)
 
-            # Rotate in place if angle is large
             if abs(angle_error) > 0.5:
                 linear_vel = 0.0
 
@@ -299,7 +357,6 @@ class ObstacleFreeWaypointController:
             ctrl_msg.angular.z = angular_vel
             self.robot_ctrl_pub.publish(ctrl_msg)
 
-            # Check if waypoint reached
             if distance_error < 0.1:
                 current_waypoint_idx += 1
             ######### Your code ends here #########
