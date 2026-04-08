@@ -99,6 +99,7 @@ class RrtPlanner:
         self.delta = 0.1
         self.obstacle_padding = 0.15
         self.goal_threshold = GOAL_THRESHOLD
+        self.max_iterations = 5000
 
     def visualize_plan(self, path: List[Dict]):
         marker_array = MarkerArray()
@@ -221,9 +222,8 @@ class RrtPlanner:
         # Find path from start to goal location through tree
         ######### Your code starts here #########
         goal_reached_node = None
-        max_iterations = 5000
  
-        for _ in range(max_iterations):
+        for _ in range(self.max_iterations):
             q_rand = self._randomly_sample_q()
             q_new = self._extend(graph, q_rand)
  
@@ -247,7 +247,7 @@ class RrtPlanner:
  
             plan[-1] = {"x": goal["x"], "y": goal["y"]}
         else:
-            rospy.logwarn(f"RRT did not reach the goal within {max_iterations} iterations.")
+            rospy.logwarn(f"RRT did not reach the goal within {self.max_iterations} iterations.")
 
         ######### Your code ends here #########
         return plan, graph
